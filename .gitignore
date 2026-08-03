@@ -1,0 +1,7 @@
+obj/
+bin/
+
+vgcore*
+
+.idea/
+.DS_Store
