@@ -112,26 +112,75 @@ static bool inputIsComplete(Repl *repl, const char *text) {
  * tried first - that is almost always what a user typing at the prompt means
  * by one "entry" - and, failing that, every other rule the grammar defines.
  * Nothing here names a rule the grammar didn't itself define, which is what
- * lets this REPL work unmodified against any grammar file. */
-static SyntaxNode *parseNext(Repl *repl, TokenStream *stream) {
-	Parser *p = repl->parser;
-	SyntaxNode *node;
+ * lets this REPL work unmodified against any grammar file.
+ *
+ * This backtracks across statement boundaries: a candidate rule that only
+ * matches part of the current position is not accepted until the *rest* of
+ * the entry, from there, can also be parsed all the way to a clean end. That
+ * matters because some rules (STX_EXPR chief among them) can legitimately
+ * match just a prefix - `a` alone is already a complete expression - and
+ * without this check a malformed statement like `a = a + 1` (missing the
+ * semicolon STX_ASSIGN requires) would be silently misread as "the bare
+ * expression `a`" followed by a nonsensical leftover `= a + 1`, rather than
+ * being rejected as the single malformed statement it actually is.
+ *
+ * Nothing runs until the whole entry is known to parse cleanly: side effects
+ * only start once parseEntry returns success, never partway through this
+ * search - see runEntry, which parses everything up front and only then
+ * executes each statement in order. */
+#define MAX_ENTRY_STATEMENTS 4096
 
-	node = parseRuleAt(&p->grammar, p->grammar.start, stream, &p->arena);
-	if (node) {
-		return node;
+static bool parseEntryFrom(Repl *repl, TokenStream *stream,
+                          SyntaxNode **out, size_t depth, size_t *out_n) {
+	Parser *p = repl->parser;
+
+	if (stream->pos >= stream->n || stream->tk[stream->pos].type == TK_EOF) {
+		*out_n = depth;
+		return true;
+	}
+	if (depth >= MAX_ENTRY_STATEMENTS) {
+		return false;
 	}
 
-	for (SYNTAX_TYPE t = 0; (size_t)t < p->grammar.n_rules; t++) {
-		if (!p->grammar.rules[t].head) {
+	size_t start = stream->pos;
+
+	for (long attempt = -1; attempt < (long)p->grammar.n_rules; attempt++) {
+		SYNTAX_TYPE t;
+		SyntaxNode *node;
+
+		if (attempt < 0) {
+			t = p->grammar.start;
+		} else {
+			t = (SYNTAX_TYPE)attempt;
+			if (!p->grammar.rules[t].head || !interpIsRunnable(t)) {
+				continue;
+			}
+		}
+
+		stream->pos = start;
+		node = parseRuleAt(&p->grammar, t, stream, &p->arena);
+		if (!node) {
 			continue;
 		}
-		node = parseRuleAt(&p->grammar, t, stream, &p->arena);
-		if (node) {
-			return node;
+
+		out[depth] = node;
+		if (parseEntryFrom(repl, stream, out, depth + 1, out_n)) {
+			return true;
 		}
+		/* This candidate parsed, but left something the rest of the entry
+		 * couldn't make sense of - try the next candidate rule for THIS
+		 * position instead of keeping the misleading partial match. */
 	}
-	return NULL;
+
+	stream->pos = start;
+	return false;
+}
+
+/* Parses the whole entry into a sequence of statement nodes, or fails
+ * outright - never a mix of "some accepted, then a confusing error partway
+ * through". `out` must have room for at least MAX_ENTRY_STATEMENTS nodes. */
+static bool parseEntry(Repl *repl, TokenStream *stream, SyntaxNode **out, size_t *out_n) {
+	return parseEntryFrom(repl, stream, out, 0, out_n);
 }
 
 /* --- commands ------------------------------------------------------------- */
@@ -233,6 +282,8 @@ static void runEntry(Repl *repl, const char *text) {
 	Token *tokens;
 	size_t n_tokens = 0;
 	Token bad;
+	static SyntaxNode *nodes[MAX_ENTRY_STATEMENTS];
+	size_t n_nodes = 0;
 
 	tokens = tokenizeAll(text, &p->reg, &p->arena, &n_tokens, &bad);
 	if (!tokens) {
@@ -253,17 +304,19 @@ static void runEntry(Repl *repl, const char *text) {
 	stream.depth = 0;
 	stream.depth_exceeded = false;
 
-	/* An entry may hold several statements - a Shift+Enter block usually does -
-	 * so each is parsed and printed in turn until the stream is exhausted. */
-	while (stream.pos < stream.n && stream.tk[stream.pos].type != TK_EOF) {
-		SyntaxNode *node = parseNext(repl, &stream);
+	/* The whole entry is parsed - and validated, via backtracking, to parse
+	 * cleanly start to finish - before anything runs. An entry may hold
+	 * several statements (a Shift+Enter block usually does), which is why
+	 * this is a sequence rather than one parseRuleAt call. */
+	if (!parseEntry(repl, &stream, nodes, &n_nodes)) {
+		const Token *at = &stream.tk[stream.furthest];
+		fprintf(stderr, "parse error: unexpected %s \"%.*s\"\n",
+		        tokenName(&p->reg, at->type), (int)at->len, at->start);
+		return;
+	}
 
-		if (!node) {
-			const Token *at = &stream.tk[stream.furthest];
-			fprintf(stderr, "parse error: unexpected %s \"%.*s\"\n",
-			        tokenName(&p->reg, at->type), (int)at->len, at->start);
-			return;
-		}
+	for (size_t i = 0; i < n_nodes; i++) {
+		SyntaxNode *node = nodes[i];
 
 		if (repl->show_ast) {
 			printSyntaxNode(&p->reg, node, 0);

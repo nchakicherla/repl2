@@ -47,6 +47,17 @@ ExecResult interpExecEcho(Interp *in, const SyntaxNode *root, int *out_exit);
  * this to decide between running a statement and echoing an expression. */
 bool interpIsExpression(const SyntaxNode *node);
 
+/* True for a tag execNode/evalNode can do something meaningful with as an
+ * independent, standalone unit - a real statement type, an expression type
+ * (see interpIsExpression), or a grammar-minted tag (>= STX__COUNT, treated
+ * as transparent grouping). False for a tag that only exists to be
+ * referenced from inside another rule's body (STX_EQUAL, STX_ARITHOP,
+ * STX_VTYPE, ...) - parseable in isolation, perhaps, but never meaningful
+ * as a whole entry on its own. The REPL uses this to decide which candidate
+ * rules are worth trying as the next statement in an entry; keep it in sync
+ * with execNode's own switch in interp.c. */
+bool interpIsRunnable(SYNTAX_TYPE type);
+
 /* Convenience wrapper for a one-shot run: creates an Interp, hoists function
  * definitions, executes. Returns 0 on success. */
 int runProgram(const SyntaxNode *root, Registry *reg, Arena *arena, int *out_exit);

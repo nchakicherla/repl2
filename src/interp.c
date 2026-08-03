@@ -1079,6 +1079,49 @@ bool interpIsExpression(const SyntaxNode *node) {
 	}
 }
 
+/* Kept in sync with execNode's own switch by hand, the same way shape.c's
+ * CONTRACTS table is kept in sync with what each tag structurally needs -
+ * there is no way to derive this automatically from the switch itself. */
+bool interpIsRunnable(SYNTAX_TYPE type) {
+	switch (type) {
+		case STX_SCOPE:
+		case STX_DECLARE:
+		case STX_INIT:
+		case STX_ASSIGN:
+		case STX_IF:
+		case STX_WHILE:
+		case STX_FOR:
+		case STX_RETURN:
+		case STX_EXIT:
+		case STX_FNDEF:
+		case STX_BREAK:
+		case STX_CLASS:
+		case STX_SWITCH:
+		case STX_CASE:
+		case STX_FORRANGE:
+		case STX_ECHO:
+		case STX_EXPR:
+		case STX_GEXPR:
+		case STX_NUM:
+		case STX_STRLIT:
+		case STX_TRUE:
+		case STX_FALSE:
+		case STX_NIL:
+		case STX_VAR:
+		case STX_FNCALL:
+		case STX_MEMBER:
+		case STX_INDEX:
+		case STX_THIS:
+		case STX_INCREMENT:
+		case STX_DECREMENT:
+			return true;
+		default:
+			/* Grammar-minted names are transparent grouping to execNode
+			 * (see its own default case), so they're always worth trying. */
+			return type >= STX__COUNT;
+	}
+}
+
 static ExecResult finish(Interp *in, Flow flow, int *out_exit) {
 	switch (flow) {
 		case FLOW_ERROR:
