@@ -1,4 +1,5 @@
 #include "scanner.h"
+#include "oom.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -207,8 +208,8 @@ Token *tokenizeAll(const char *source, Registry *reg, Arena *arena,
 
 		if (n == cap) {
 			size_t new_cap = (cap == 0) ? 256 : cap * 2;
-			tokens = arena_grow(arena, tokens, cap * sizeof(Token),
-			                    new_cap * sizeof(Token), _Alignof(Token));
+			tokens = checkAlloc(arena_grow(arena, tokens, cap * sizeof(Token),
+			                              new_cap * sizeof(Token), _Alignof(Token)));
 			cap = new_cap;
 		}
 		tokens[n++] = token;

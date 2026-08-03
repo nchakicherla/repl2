@@ -4,6 +4,7 @@
 #include "color.h"
 #include "file.h"
 #include "linenoise.h"
+#include "oom.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -347,7 +348,7 @@ int runRepl(Parser *parser, const char *grammar_file) {
 			/* The token stream points into this string, so the entry has to
 			 * outlive the loop iteration - arena_strdup gives it the parser's
 			 * lifetime instead of the block buffer's. */
-			runEntry(&repl, arena_strdup(&parser->arena, block.data));
+			runEntry(&repl, checkAlloc(arena_strdup(&parser->arena, block.data)));
 		}
 
 		bufFree(&block);

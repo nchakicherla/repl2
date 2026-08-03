@@ -1,23 +1,24 @@
 #include "ast.h"
 #include "color.h"
+#include "oom.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static SyntaxNode *newAnonNode(Arena *arena) {
-	SyntaxNode *node = arena_alloc_type(arena, SyntaxNode);
+	SyntaxNode *node = checkAlloc(arena_alloc_type(arena, SyntaxNode));
 	initSyntaxNode(node);
 	return node;
 }
 
 static void addChild(SyntaxNode *parent, SyntaxNode *child, Arena *arena) {
 	if (parent->n_children == 0) {
-		parent->children = arena_alloc(arena, sizeof(SyntaxNode *), _Alignof(SyntaxNode *));
+		parent->children = checkAlloc(arena_alloc(arena, sizeof(SyntaxNode *), _Alignof(SyntaxNode *)));
 	} else {
-		parent->children = arena_grow(arena, parent->children,
+		parent->children = checkAlloc(arena_grow(arena, parent->children,
 		                              parent->n_children * sizeof(SyntaxNode *),
 		                              (parent->n_children + 1) * sizeof(SyntaxNode *),
-		                              _Alignof(SyntaxNode *));
+		                              _Alignof(SyntaxNode *)));
 	}
 	parent->children[parent->n_children] = child;
 	parent->n_children++;

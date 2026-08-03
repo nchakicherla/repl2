@@ -1,4 +1,5 @@
 #include "file.h"
+#include "oom.h"
 
 char *tryReadFile(const char *name, Arena *arena) {
 	FILE *file = NULL;
@@ -25,7 +26,7 @@ char *tryReadFile(const char *name, Arena *arena) {
 		return NULL;
 	}
 
-	output = arena_alloc(arena, (size_t)size + 1, _Alignof(char));
+	output = checkAlloc(arena_alloc(arena, (size_t)size + 1, _Alignof(char)));
 
 	// an empty file is legitimate; fread returning 0 is only an error when
 	// there was something to read

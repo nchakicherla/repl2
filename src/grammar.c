@@ -1,5 +1,6 @@
 #include "grammar.h"
 #include "file.h"
+#include "oom.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -76,8 +77,8 @@ static void gerror(GParser *gp, const Token *at, const char *msg) {
 static void nodeListPush(NodeList *list, RuleNode *node, Arena *arena) {
 	if (list->n == list->cap) {
 		size_t new_cap = (list->cap == 0) ? 8 : list->cap * 2;
-		list->items = arena_grow(arena, list->items, list->cap * sizeof(RuleNode *),
-		                         new_cap * sizeof(RuleNode *), _Alignof(RuleNode *));
+		list->items = checkAlloc(arena_grow(arena, list->items, list->cap * sizeof(RuleNode *),
+		                                    new_cap * sizeof(RuleNode *), _Alignof(RuleNode *)));
 		list->cap = new_cap;
 	}
 	list->items[list->n++] = node;
@@ -86,15 +87,15 @@ static void nodeListPush(NodeList *list, RuleNode *node, Arena *arena) {
 static void ruleListPush(RuleList *list, PendingRule rule, Arena *arena) {
 	if (list->n == list->cap) {
 		size_t new_cap = (list->cap == 0) ? 64 : list->cap * 2;
-		list->items = arena_grow(arena, list->items, list->cap * sizeof(PendingRule),
-		                         new_cap * sizeof(PendingRule), _Alignof(PendingRule));
+		list->items = checkAlloc(arena_grow(arena, list->items, list->cap * sizeof(PendingRule),
+		                                    new_cap * sizeof(PendingRule), _Alignof(PendingRule)));
 		list->cap = new_cap;
 	}
 	list->items[list->n++] = rule;
 }
 
 static RuleNode *newNode(GParser *gp, RULE_NODE_TYPE kind) {
-	RuleNode *node = arena_zalloc(gp->arena, sizeof(RuleNode), _Alignof(RuleNode));
+	RuleNode *node = checkAlloc(arena_zalloc(gp->arena, sizeof(RuleNode), _Alignof(RuleNode)));
 	node->kind = kind;
 	return node;
 }
@@ -399,8 +400,8 @@ int loadGrammar(Grammar *grammar, const char *filename, Registry *reg, Arena *ar
 	/* Syntax IDs are dense, so the rule table can be indexed by ID directly.
 	 * The count is only known now, after interning every name the file used. */
 	grammar->n_rules = registrySyntaxCount(reg);
-	grammar->rules = arena_zalloc(arena, grammar->n_rules * sizeof(GrammarRule),
-	                              _Alignof(GrammarRule));
+	grammar->rules = checkAlloc(arena_zalloc(arena, arena_checked_mul(arena, grammar->n_rules, sizeof(GrammarRule)),
+	                                         _Alignof(GrammarRule)));
 	for (size_t i = 0; i < grammar->n_rules; i++) {
 		grammar->rules[i].stype = (SYNTAX_TYPE)i;
 		grammar->rules[i].head = NULL;

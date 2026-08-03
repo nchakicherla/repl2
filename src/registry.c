@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "oom.h"
 
 #include <string.h>
 
@@ -12,13 +13,13 @@ static void *growArray(Arena *arena, void *ptr, size_t *cap, size_t used,
 		return ptr;
 	}
 	new_cap = (*cap == 0) ? 16 : *cap * 2;
-	ptr = arena_grow(arena, ptr, *cap * elem_size, new_cap * elem_size, elem_align);
+	ptr = checkAlloc(arena_grow(arena, ptr, *cap * elem_size, new_cap * elem_size, elem_align));
 	*cap = new_cap;
 	return ptr;
 }
 
 static const char *internChars(Arena *arena, const char *s, size_t len) {
-	char *out = arena_alloc(arena, len + 1, _Alignof(char));
+	char *out = checkAlloc(arena_alloc(arena, len + 1, _Alignof(char)));
 	memcpy(out, s, len);
 	out[len] = '\0';
 	return out;
