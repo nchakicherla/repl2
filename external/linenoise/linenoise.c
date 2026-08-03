@@ -1933,6 +1933,31 @@ static int linenoiseIsShiftEnter(const char *param, char final) {
     return 0;
 }
 
+/* The kitty keyboard protocol's "disambiguate escape codes" flag (the one
+ * linenoiseEnableExtendedKeys turns on) reports EVERY ctrl+key combination as
+ * a CSI u sequence instead of a legacy control byte - unlike xterm's
+ * modifyOtherKeys, which at the level enabled here only touches keys that
+ * would otherwise be ambiguous, and leaves plain ctrl+letter alone. Without
+ * this, a terminal that actually implements the kitty protocol (as opposed
+ * to one that just ignores the enabling sequence, which is what makes this
+ * silently fine everywhere else) would have every ctrl+letter binding below
+ * - ctrl-d to exit chief among them - silently swallowed here, because nothing
+ * past this point recognises anything but the Shift+Enter report.
+ *
+ * `ESC [ 100 ; 5 u` is ctrl+d: 100 is the unshifted codepoint for 'd', and 5
+ * is 1 + the ctrl bit (4) with no other modifier. This recovers the same
+ * byte a non-kitty terminal would have sent (`code & 0x1f`, the standard
+ * ASCII ctrl-letter mapping) so it can be redispatched through the ordinary
+ * switch below - not reimplemented a second time here. */
+static int linenoiseKittyCtrlLetter(const char *param, char final) {
+    int p[2] = {0, 0};
+    int n = linenoiseParseParams(param, p, 2);
+
+    if (final != 'u' || n < 2 || p[1] != 5) return -1;
+    if (p[0] < 'a' || p[0] > 'z') return -1;
+    return p[0] & 0x1f;
+}
+
 /* Shared tail of the Enter and Shift+Enter paths. */
 static char *linenoiseAcceptLine(struct linenoiseState *l, int continued) {
     lineWasContinued = continued;
@@ -1976,6 +2001,7 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
         c = retval;
     }
 
+dispatch:
     switch(c) {
     case ENTER:    /* enter */
         return linenoiseAcceptLine(l, 0);
@@ -2069,6 +2095,12 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
                     }
                 } else if (final == 'u' && linenoiseIsShiftEnter(param, final)) {
                     return linenoiseAcceptLine(l, 1);
+                } else if (final == 'u') {
+                    int recovered = linenoiseKittyCtrlLetter(param, final);
+                    if (recovered >= 0) {
+                        c = (char)recovered;
+                        goto dispatch;
+                    }
                 }
             } else {
                 switch(seq[1]) {
