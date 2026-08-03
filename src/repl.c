@@ -3,6 +3,7 @@
 #include "ast.h"
 #include "color.h"
 #include "file.h"
+#include "interp.h"
 #include "linenoise.h"
 #include "oom.h"
 #include "shape.h"
@@ -18,10 +19,12 @@
 
 typedef struct s_Repl {
 	Parser *parser;
+	Interp *interp;
 	const char *grammar_file;
 	bool show_ast;
 	bool show_tokens;
 	bool show_shapes;
+	int exit_code;
 	bool quitting;
 } Repl;
 
@@ -136,13 +139,17 @@ static SyntaxNode *parseNext(Repl *repl, TokenStream *stream) {
 static void printHelp(void) {
 	printf("  :help            this message\n");
 	printf("  :quit  :q        leave the repl (also Ctrl-D)\n");
-	printf("  :ast             toggle printing the syntax tree for each entry (on by default)\n");
+	printf("  :ast             toggle printing the syntax tree for each entry\n");
 	printf("  :tokens          toggle printing the token stream for each entry\n");
 	printf("  :shapes          toggle checking each entry's tree against the built-in\n");
 	printf("                   tags' structural requirements (see src/shape.h)\n");
 	printf("  :rules           list the rules the loaded grammar defines\n");
-	printf("  :load <file>     read and parse a source file in this session\n");
+	printf("  :load <file>     read, parse, and run a source file in this session\n");
+	printf("  :reset           discard all variables and functions\n");
 	printf("\n");
+	printf("  Each entry is run after parsing - variables and functions declared at\n");
+	printf("  the prompt stay in scope for later entries. An expression's value is\n");
+	printf("  printed automatically; a statement's is not.\n");
 	printf("  Blocks continue automatically while brackets are unbalanced.\n");
 	printf("  Shift+Enter forces a continuation on terminals that support it.\n");
 	printf("  A trailing backslash forces a continuation on any terminal.\n");
@@ -199,6 +206,9 @@ static bool handleCommand(Repl *repl, const char *line) {
 		printf("shape checking %s\n", repl->show_shapes ? "on" : "off");
 	} else if (0 == strcmp(line, ":rules")) {
 		listRules(repl);
+	} else if (0 == strcmp(line, ":reset")) {
+		repl->interp = interpCreate(&repl->parser->reg, &repl->parser->arena);
+		printf("session state cleared\n");
 	} else if (0 == strncmp(line, ":load", 5)) {
 		const char *arg = line + 5;
 		while (*arg == ' ') {
@@ -265,6 +275,21 @@ static void runEntry(Repl *repl, const char *text) {
 				printf("no shape issues found\n");
 			}
 		}
+
+		/* Deliberately not wrapped in a scope: bindings made at the prompt have
+		 * to outlive the entry that created them. */
+		{
+			int entry_exit = 0;
+			ExecResult result = interpExecEcho(repl->interp, node, &entry_exit);
+			if (result == EXEC_EXITED) {
+				repl->exit_code = entry_exit;
+				repl->quitting = true;
+				return;
+			}
+			if (result == EXEC_ERROR) {
+				return; /* abandon the rest of the block */
+			}
+		}
 	}
 }
 
@@ -307,10 +332,12 @@ int runRepl(Parser *parser, const char *grammar_file) {
 	bool have_history;
 
 	repl.parser = parser;
+	repl.interp = interpCreate(&parser->reg, &parser->arena);
 	repl.grammar_file = grammar_file;
-	repl.show_ast = true;
+	repl.show_ast = false;
 	repl.show_tokens = false;
 	repl.show_shapes = false;
+	repl.exit_code = 0;
 	repl.quitting = false;
 
 	have_history = (historyPath(hist, sizeof(hist)) != NULL);
@@ -384,5 +411,5 @@ int runRepl(Parser *parser, const char *grammar_file) {
 
 	bufFree(&block);
 	linenoiseEnableExtendedKeys(0);
-	return 0;
+	return repl.exit_code;
 }

@@ -1,12 +1,14 @@
 # repl2
 
 repl2 is a REPL for exercising a grammar you define yourself. Point it at a
-grammar file, type (or pipe, or `:load`) some input, and it prints the
-`SyntaxNode` tree that input produced - nothing more. There's no
-interpreter and no execution: it's a testing ground for designing a
-scripting language or DSL's *syntax*, letting you see exactly how a
-candidate grammar carves up a piece of source before committing to what any
-of it should mean.
+grammar file, type (or pipe, or `:load`) some input, and it runs it - a
+tree-walking interpreter dispatches on the tags your grammar's rules
+produce, the same way whether the concrete syntax is C-like or something
+else entirely. `:ast`/`:tokens`/`:shapes` are still there to inspect what a
+candidate grammar produces without needing execution semantics attached
+first - it's a testing ground for designing a scripting language or DSL,
+letting you see exactly how a grammar carves up a piece of source, and
+then actually run it once you're ready to.
 
 It combines pieces of two earlier, related projects by the same author:
 the grammar/tokenizer/parser/AST pipeline is adapted from
@@ -15,10 +17,11 @@ by `db4`'s arena. See [LICENSE](LICENSE) for the full provenance.
 
 ## Scope
 
-**Non-goals:** no interpreter, no VM, no bytecode, no semantic actions
-attached to a grammar rule. Parsing and AST inspection only - depth on
-"does this grammar capture the syntax I want" rather than breadth on
-"and now make it run."
+**Non-goals (for now):** no VM, no bytecode compiler. The tree-walking
+interpreter here is deliberately the simpler thing to get right first - a
+reference implementation to validate a bytecode VM against later, by
+running the same programs through both and diffing the output, rather
+than trusting a from-scratch VM's correctness on faith.
 
 ## Capabilities
 
@@ -48,6 +51,16 @@ attached to a grammar rule. Parsing and AST inspection only - depth on
   `DB4_MEM_LIMIT_MB`) and a single checked failure path
   ([src/oom.c](src/oom.c)) rather than allocation failures turning into
   undefined behavior.
+- **Interpreter**: a tree-walking evaluator ([src/interp.c](src/interp.c))
+  ported from flexible-parser's original, switching on the built-in
+  `STX_*` tags and pulling children by role rather than fixed position
+  (see "On grammar and semantics" below) - variables, arithmetic with
+  correct precedence, `if`/`while`/`for`, functions with lexically-scoped
+  calls, `break`/`return`/`exit`. [src/object.h](src/object.h) is the
+  runtime value representation (nil/int/float/bool/string) and
+  [src/env.h](src/env.h) the variable-binding stack, both grammar-agnostic
+  and usable independently of the tree-walker - see either header's own
+  doc comment.
 
 ## Building
 
@@ -66,79 +79,92 @@ repl2  grammar: resources/grammar-mini.txt
 type :help for commands, Ctrl-D to exit
 
 >>> let x := 5;
-- /STX_INIT
-	- TK_LET let
-	- /STX_VAR
-		- TK_IDENTIFIER x
-	- TK_ASSIGN :=
-	- /STX_EXPR
-		- /STX_NUM
-			- TK_NUM 5
-	- TK_SEMICOLON ;
+>>> x + 1
+6
 >>> :quit
 ```
+
+`let x := 5;` is a statement (it ends in `;`, wrapped in the grammar's own
+statement rule) and runs silently; `x + 1` is a bare expression (no `;`,
+matched directly) and its value is printed automatically - the same
+`STX_EXPR`/`STX_FNCALL`/... check either grammar's own interpreter-facing
+tags would use, regardless of concrete syntax.
 
 | Command | Effect |
 |---|---|
 | `:help` / `:h` | Show the command list |
 | `:quit` / `:q` (also Ctrl-D) | Leave the REPL |
-| `:ast` | Toggle printing the syntax tree for each entry (on by default) |
+| `:ast` | Toggle printing the syntax tree for each entry |
 | `:tokens` | Toggle printing the token stream for each entry |
+| `:shapes` | Toggle checking each entry's tree against the built-in tags' structural requirements (see [src/shape.h](src/shape.h)) |
 | `:rules` | List the rules the loaded grammar defines |
-| `:load <file>` | Read and parse a source file in this session |
+| `:load <file>` | Read, parse, and run a source file in this session |
+| `:reset` | Discard all variables and functions |
 
-Any other input is tokenized against the loaded grammar and matched
-against its rules - the grammar's own start rule first, then every other
-rule it defines, so one entry can hold several statements (a Shift+Enter
-block usually does) and the REPL still works unmodified against a grammar
-whose rule names it has never seen before.
+Any other input is tokenized against the loaded grammar, matched against
+its rules - the grammar's own start rule first, then every other rule it
+defines, so one entry can hold several statements (a Shift+Enter block
+usually does) - and then run: variables and functions declared at the
+prompt stay in scope for later entries in the same session.
 
-## Parsing a script
+## Running a script
 
 ```bash
 bin/repl2 -g resources/grammar.txt -s resources/script.tl
 ```
 
-Parses the file once and prints its AST (or reports a scan/parse error and
-exits non-zero) instead of starting the REPL. Useful flags:
+Parses the file once and runs it (or reports a scan/parse error and exits
+non-zero) instead of starting the REPL. Useful flags:
 
 ```
 usage: repl2 [options]
   -g <file>   grammar file      (default ./resources/grammar.txt)
-  -s <file>   parse this source file and print its AST, instead of
-              starting the repl
-  --tokens    print the token stream
-  --no-ast    don't print the syntax tree (only useful with -s)
+  -s <file>   parse and run this source file, instead of starting
+              the repl
+  --tokens    print the token stream (only useful with -s)
+  --ast       print the syntax tree (only useful with -s)
   --check-shapes  check the parsed tree against the built-in tags'
                   structural requirements (only useful with -s)
+  --parse-only  parse (and print --tokens/--ast/--check-shapes, if
+                given) but don't run it (only useful with -s)
   --dump-grammar <file>  write the compiled rule trees to a file
   -h  --help  this message
 ```
 
+`--parse-only` is what to reach for while you're still designing a
+grammar and don't want a half-finished program's side effects (or a
+runtime error from a construct you haven't wired execution up for yet) -
+it's the direct equivalent of what `-s` used to do here before an
+interpreter existed at all.
+
 ## On grammar and semantics
 
-Reusing a built-in syntax name (`STX_IF`, `STX_WHILE`, ...) for a rule that
-matches its intent means a future interpreter built the same way the
-original flexible-parser's was - switching on the tag, pulling children by
-role rather than fixed position - would run it without modification, even
-across grammars with completely different concrete syntax (see
-`resources/grammar.txt` vs. `resources/grammar-mini.txt`). Minting a new
-rule name, or reusing an existing one for something structurally
-different, parses and prints in the AST fine but carries no built-in
+The interpreter ([src/interp.c](src/interp.c)) switches on built-in syntax
+tags (`STX_IF`, `STX_WHILE`, ...) and pulls children by role rather than
+fixed position, so reusing a tag for a rule that matches its intent runs
+correctly without any change to interp.c, even across grammars with
+completely different concrete syntax - `resources/grammar.txt` and
+`resources/grammar-mini.txt` are genuinely different languages (different
+keywords, different punctuation, parens vs. no parens on conditions) and
+both run through the same unmodified interpreter. Minting a new rule
+name, or reusing an existing tag for something structurally different,
+still parses and prints in the AST fine but carries no built-in
 meaning - there's no enforcement of that convention at the grammar layer,
-by design; giving new syntax real semantics is deliberately left as a
-separate, later step.
+by design; giving new syntax real semantics means adding a case to
+interp.c yourself.
 
 [src/shape.h](src/shape.h) (`:shapes` in the REPL, `--check-shapes` with
 `-s`) checks a parsed tree against what a tag like `STX_WHILE` or
-`STX_FNDEF` would structurally need if an interpreter were built the way
-the original flexible-parser's was - e.g. a rule tagged `STX_WHILE` with no
-named children at all, so there could never be a condition to test. It
+`STX_FNDEF` structurally needs for interp.c's own tree-navigation to find
+what it's looking for - e.g. a rule tagged `STX_WHILE` with no named
+children at all, so there could never be a condition to test. It
 deliberately can't catch everything: `STX_IF` and `STX_WHILE` both just
 need one condition and one body, so tagging an if-shaped rule `STX_WHILE`
 by mistake produces an identically-shaped tree - nothing structural
-distinguishes them. That's a naming/intent mistake, not a shape mistake,
-and no structural check can catch it.
+distinguishes them, and interp.c will happily *loop* on what reads like an
+`if`. That's a naming/intent mistake, not a shape mistake, and no
+structural check can catch it - only running the example and noticing the
+behavior is wrong will.
 
 ## License
 
