@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define HISTORY_FILE  ".repl2_history"
 #define HISTORY_MAX   1000
@@ -266,12 +267,23 @@ static char *historyPath(char *buf, size_t size) {
 	return buf;
 }
 
+/* Same check linenoise.c itself uses (isatty, with a LINENOISE_ASSUME_TTY
+ * escape hatch) to decide whether to fall back to a plain line reader - kept
+ * in sync with that decision rather than inventing a second opinion on
+ * whether this is an interactive session. */
+static bool stdinIsInteractive(void) {
+	return isatty(STDIN_FILENO) || getenv("LINENOISE_ASSUME_TTY") != NULL;
+}
+
 static void banner(Repl *repl) {
 	setColor(ANSI_CYAN);
 	printf("repl2");
 	resetColor();
 	printf("  grammar: %s\n", repl->grammar_file);
-	printf("type :help for commands, Ctrl-D to exit\n\n");
+	if (stdinIsInteractive()) {
+		printf("type :help for commands, Ctrl-D to exit\n");
+	}
+	printf("\n");
 }
 
 int runRepl(Parser *parser, const char *grammar_file) {
