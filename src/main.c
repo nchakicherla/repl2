@@ -5,6 +5,7 @@
 #include "file.h"
 #include "parser.h"
 #include "repl.h"
+#include "shape.h"
 
 static const char *DEFAULT_GRAMMAR = "./resources/grammar.txt";
 
@@ -15,6 +16,8 @@ static void usage(void) {
 	printf("              starting the repl\n");
 	printf("  --tokens    print the token stream\n");
 	printf("  --no-ast    don't print the syntax tree (only useful with -s)\n");
+	printf("  --check-shapes  check the parsed tree against the built-in tags'\n");
+	printf("                  structural requirements (only useful with -s)\n");
 	printf("  --dump-grammar <file>  write the compiled rule trees to a file\n");
 	printf("  -h  --help  this message\n");
 }
@@ -25,6 +28,7 @@ int main(int argc, char **argv) {
 	const char *grammar_log = NULL;
 	bool show_ast = true;
 	bool show_tokens = false;
+	bool check_shapes = false;
 
 	Parser parser;
 	ParseStatus status;
@@ -42,6 +46,8 @@ int main(int argc, char **argv) {
 			show_tokens = true;
 		} else if (0 == strcmp(argv[i], "--no-ast")) {
 			show_ast = false;
+		} else if (0 == strcmp(argv[i], "--check-shapes")) {
+			check_shapes = true;
 		} else if (0 == strcmp(argv[i], "-h") || 0 == strcmp(argv[i], "--help")) {
 			usage();
 			return 0;
@@ -100,6 +106,13 @@ int main(int argc, char **argv) {
 
 	if (show_ast) {
 		printSyntaxNode(&parser.reg, parser.ast, 0);
+	}
+
+	if (check_shapes) {
+		size_t violations = checkShapes(&parser.reg, parser.ast, stdout);
+		if (violations == 0) {
+			printf("no shape issues found\n");
+		}
 	}
 
 done:

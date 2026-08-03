@@ -5,6 +5,7 @@
 #include "file.h"
 #include "linenoise.h"
 #include "oom.h"
+#include "shape.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@ typedef struct s_Repl {
 	const char *grammar_file;
 	bool show_ast;
 	bool show_tokens;
+	bool show_shapes;
 	bool quitting;
 } Repl;
 
@@ -136,6 +138,8 @@ static void printHelp(void) {
 	printf("  :quit  :q        leave the repl (also Ctrl-D)\n");
 	printf("  :ast             toggle printing the syntax tree for each entry (on by default)\n");
 	printf("  :tokens          toggle printing the token stream for each entry\n");
+	printf("  :shapes          toggle checking each entry's tree against the built-in\n");
+	printf("                   tags' structural requirements (see src/shape.h)\n");
 	printf("  :rules           list the rules the loaded grammar defines\n");
 	printf("  :load <file>     read and parse a source file in this session\n");
 	printf("\n");
@@ -190,6 +194,9 @@ static bool handleCommand(Repl *repl, const char *line) {
 	} else if (0 == strcmp(line, ":tokens")) {
 		repl->show_tokens = !repl->show_tokens;
 		printf("token printing %s\n", repl->show_tokens ? "on" : "off");
+	} else if (0 == strcmp(line, ":shapes")) {
+		repl->show_shapes = !repl->show_shapes;
+		printf("shape checking %s\n", repl->show_shapes ? "on" : "off");
 	} else if (0 == strcmp(line, ":rules")) {
 		listRules(repl);
 	} else if (0 == strncmp(line, ":load", 5)) {
@@ -251,6 +258,13 @@ static void runEntry(Repl *repl, const char *text) {
 		if (repl->show_ast) {
 			printSyntaxNode(&p->reg, node, 0);
 		}
+
+		if (repl->show_shapes) {
+			size_t violations = checkShapes(&p->reg, node, stdout);
+			if (violations == 0) {
+				printf("no shape issues found\n");
+			}
+		}
 	}
 }
 
@@ -296,6 +310,7 @@ int runRepl(Parser *parser, const char *grammar_file) {
 	repl.grammar_file = grammar_file;
 	repl.show_ast = true;
 	repl.show_tokens = false;
+	repl.show_shapes = false;
 	repl.quitting = false;
 
 	have_history = (historyPath(hist, sizeof(hist)) != NULL);

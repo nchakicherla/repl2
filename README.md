@@ -109,6 +109,8 @@ usage: repl2 [options]
               starting the repl
   --tokens    print the token stream
   --no-ast    don't print the syntax tree (only useful with -s)
+  --check-shapes  check the parsed tree against the built-in tags'
+                  structural requirements (only useful with -s)
   --dump-grammar <file>  write the compiled rule trees to a file
   -h  --help  this message
 ```
@@ -126,6 +128,17 @@ different, parses and prints in the AST fine but carries no built-in
 meaning - there's no enforcement of that convention at the grammar layer,
 by design; giving new syntax real semantics is deliberately left as a
 separate, later step.
+
+[src/shape.h](src/shape.h) (`:shapes` in the REPL, `--check-shapes` with
+`-s`) checks a parsed tree against what a tag like `STX_WHILE` or
+`STX_FNDEF` would structurally need if an interpreter were built the way
+the original flexible-parser's was - e.g. a rule tagged `STX_WHILE` with no
+named children at all, so there could never be a condition to test. It
+deliberately can't catch everything: `STX_IF` and `STX_WHILE` both just
+need one condition and one body, so tagging an if-shaped rule `STX_WHILE`
+by mistake produces an identically-shaped tree - nothing structural
+distinguishes them. That's a naming/intent mistake, not a shape mistake,
+and no structural check can catch it.
 
 ## License
 
