@@ -6,6 +6,7 @@
 #include "token_types.h"
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -272,6 +273,12 @@ static Flow applyBinary(Interp *in, const SyntaxNode *at, SYNTAX_TYPE op,
 				if (rhs.val.i64 == 0) {
 					return rtError(in, at, "division by zero");
 				}
+				/* INT64_MIN / -1 is signed overflow - undefined behavior in C,
+				 * not just a wrong answer. Two's complement has no positive
+				 * counterpart for INT64_MIN, so this can never be represented. */
+				if (lhs.val.i64 == INT64_MIN && rhs.val.i64 == -1) {
+					return rtError(in, at, "integer overflow");
+				}
 				*out = objI64(lhs.val.i64 / rhs.val.i64);
 			} else {
 				if (objAsDouble(rhs) == 0.0) {
@@ -286,6 +293,11 @@ static Flow applyBinary(Interp *in, const SyntaxNode *at, SYNTAX_TYPE op,
 			}
 			if (rhs.val.i64 == 0) {
 				return rtError(in, at, "division by zero");
+			}
+			/* Same overflow case as STX_DIV - INT64_MIN % -1 is undefined
+			 * behavior too, even though the mathematical result (0) fits. */
+			if (lhs.val.i64 == INT64_MIN && rhs.val.i64 == -1) {
+				return rtError(in, at, "integer overflow");
 			}
 			*out = objI64(lhs.val.i64 % rhs.val.i64);
 			return FLOW_NORMAL;
@@ -443,22 +455,40 @@ static Flow evalCall(Interp *in, const SyntaxNode *call, Object *out) {
 
 	if (name->len == 5 && 0 == memcmp(name->start, "print", 5)) {
 		size_t count = namedCount(call);
+		Object *values = count ? checkAlloc(arena_alloc(in->arena, count * sizeof(Object),
+		                                                _Alignof(Object)))
+		                       : NULL;
+		size_t n_values = 0;
+
+		/* Every argument is evaluated to completion before anything is
+		 * printed - otherwise a nested print() (or any other side effect)
+		 * encountered while evaluating one argument would interleave its
+		 * own output into the middle of this call's, instead of appearing
+		 * to happen entirely before it, as strict left-to-right argument
+		 * evaluation implies. Values are collected here rather than printed
+		 * as they're evaluated for exactly that reason. */
 		for (size_t i = 0; i < count; i++) {
 			const SyntaxNode *arg = namedAt(call, i);
-			Object value;
 			Flow flow;
 
 			if (arg->type == STX_NIL) {
 				continue;
 			}
-			flow = evalNode(in, arg, &value);
+			flow = evalNode(in, arg, &values[n_values]);
 			if (flow != FLOW_NORMAL) {
 				return flow;
 			}
+			n_values++;
+		}
+
+		/* Separators are counted against n_values, not the raw argument
+		 * index - a nil argument is skipped entirely (see above), so it
+		 * must not still count toward "is this the first thing printed". */
+		for (size_t i = 0; i < n_values; i++) {
 			if (i > 0) {
 				putchar(' ');
 			}
-			objPrint(value);
+			objPrint(values[i]);
 		}
 		putchar('\n');
 		*out = objNil();
@@ -549,6 +579,13 @@ static Flow callUserFunction(Interp *in, const SyntaxNode *fn,
 	if (flow == FLOW_NORMAL) {
 		*out = objNil();
 		return FLOW_NORMAL;
+	}
+	if (flow == FLOW_BREAK) {
+		/* A call boundary isolates control flow the same way it isolates
+		 * scope (see envPushFrame): a break with no loop of its own inside
+		 * this function must not reach back out and terminate a loop in
+		 * whatever called it. */
+		return rtError(in, call, "break outside a loop");
 	}
 	return flow; /* FLOW_EXIT and FLOW_ERROR keep propagating */
 }
@@ -958,6 +995,11 @@ static Flow execNode(Interp *in, const SyntaxNode *node) {
 		case STX_BREAK:   return FLOW_BREAK;
 		case STX_CLASS:
 			return rtError(in, node, "classes are not supported");
+		case STX_SWITCH:
+		case STX_CASE:
+			return rtError(in, node, "switch/case is not supported");
+		case STX_FORRANGE:
+			return rtError(in, node, "for-in is not supported");
 		case STX_ECHO: {
 			/* An expression statement: evaluate for its effects, drop the value. */
 			const SyntaxNode *inner = namedAt(node, 0);
@@ -1048,6 +1090,14 @@ static ExecResult finish(Interp *in, Flow flow, int *out_exit) {
 		case FLOW_RETURN:
 			*out_exit = (in->ret.type == I64_TYPE) ? (int)in->ret.val.i64 : 0;
 			return EXEC_OK;
+		case FLOW_BREAK:
+			/* Reaching all the way here means nothing along the way - no
+			 * enclosing loop, no enclosing call (see callUserFunction's own
+			 * check) - ever caught it, so there was no loop to break out of
+			 * in the first place. */
+			fprintf(stderr, "runtime error: break outside a loop\n");
+			*out_exit = 1;
+			return EXEC_ERROR;
 		default:
 			*out_exit = 0;
 			return EXEC_OK;
